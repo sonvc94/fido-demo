@@ -12,10 +12,10 @@ services:
       - backend-data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
-      - BASE_URL=http://localhost:8091
-      - RP_ID=localhost
-      - RP_ORIGINS=http://localhost:80,http://localhost:8091,http://localhost,http://127.0.0.1:80,http://127.0.0.1:8091,http://127.0.0.1
-      - SECRET_KEY=your-secret-key-change-in-production
+      - BASE_URL=${BASE_URL:-http://localhost:8091}
+      - RP_ID=${RP_ID:-localhost}
+      - RP_ORIGINS=${RP_ORIGINS:-http://localhost:80,http://localhost:8091,http://localhost}
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
