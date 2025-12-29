@@ -37,15 +37,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# WebAuthn configuration
-RP_ID = "localhost"
-RP_ORIGINS = ["http://localhost:3000", "http://localhost", "http://192.168.1.1:3000"]
+# WebAuthn configuration (can be overridden by environment variables)
+RP_ID = os.getenv("RP_ID", "localhost")
+RP_ORIGINS = os.getenv("RP_ORIGINS", "http://localhost:3000,http://localhost").split(",")
 
 # Base URL for QR code generation (can be overridden by environment variable)
 BASE_URL = os.getenv("BASE_URL", "http://localhost")
 
 # JWT Configuration
-SECRET_KEY = "your-secret-key-change-in-production"
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

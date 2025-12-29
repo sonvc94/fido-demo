@@ -13,6 +13,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - BASE_URL=${BASE_URL:-http://localhost}
+      - RP_ID=${RP_ID:-localhost}
+      - RP_ORIGINS=${RP_ORIGINS:-http://localhost:3000,http://localhost}
+      - SECRET_KEY=${SECRET_KEY:-your-secret-key-change-in-production}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
