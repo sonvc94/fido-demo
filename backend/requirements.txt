@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+webauthn
+sqlalchemy
+passlib[bcrypt]
+python-multipart
+cbor2
+pyjwt
+websockets
+qrcode
+pillow
