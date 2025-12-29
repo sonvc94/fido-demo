@@ -251,7 +251,7 @@ def register_finish(
             credential_id=credential_id,
             public_key=bytes_to_base64url(verification.credential_public_key),
             sign_count=verification.sign_count,
-            aaguid=verification.aaguid.uuid if verification.aaguid else None,
+            aaguid=str(verification.aaguid) if verification.aaguid else None,
             name=request.display_name or "Registered Passkey",
             created_at=datetime.utcnow().isoformat()
         )
@@ -586,7 +586,7 @@ async def mobile_register_finish(session_id: str, credential: dict, db: Session 
             credential_id=credential_id,
             public_key=bytes_to_base64url(verification.credential_public_key),
             sign_count=verification.sign_count,
-            aaguid=verification.aaguid.uuid if verification.aaguid else None,
+            aaguid=str(verification.aaguid) if verification.aaguid else None,
             name=registration.get("display_name", "Mobile Passkey"),
             created_at=datetime.utcnow().isoformat()
         )
