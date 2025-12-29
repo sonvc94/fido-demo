@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import { registerStart, registerFinish, loginStart, loginFinish, passwordLogin, getPasskeys, deletePasskey, registerQrStart, getQrStatus } from './webauthnService';
+import { registerStart, registerFinish, loginStart, loginFinish, passwordLogin, getPasskeys, deletePasskey, registerQrStart, getQrStatus, loginUsernamelessStart, loginUsernamelessFinish } from './webauthnService';
 
 function App() {
   const [username, setUsername] = useState('');
@@ -217,6 +217,42 @@ function App() {
       setUser(result);
       setHasPasskey(true);
       setActiveTab('dashboard');
+    } catch (error) {
+      setMessage(error.message || 'Authentication failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUsernamelessLogin = async () => {
+    setIsLoading(true);
+    setMessage('');
+
+    try {
+      const { challenge, options } = await loginUsernamelessStart();
+
+      const credential = await navigator.credentials.get({
+        publicKey: {
+          challenge: base64urlToBytes(options.challenge),
+          rpId: options.rpId,
+          timeout: options.timeout,
+          allowCredentials: options.allowCredentials?.map(cred => ({
+            id: base64urlToBytes(cred.id),
+            type: cred.type,
+          })),
+          userVerification: options.userVerification,
+        },
+      });
+
+      const result = await loginUsernamelessFinish(assertionToObject(credential), challenge);
+      setToken(result.access_token);
+      localStorage.setItem('token', result.access_token);
+      setMessage(`Authentication successful! Welcome, ${result.username}!`);
+      setIsAuthenticated(true);
+      setUser(result);
+      setHasPasskey(true);
+      setActiveTab('dashboard');
+      setUsername(result.username); // Set username after successful login
     } catch (error) {
       setMessage(error.message || 'Authentication failed');
     } finally {
@@ -494,6 +530,17 @@ function App() {
               <h2>Login</h2>
 
               <div className="login-methods">
+                {/* Usernameless Passkey Login - No username required */}
+                <div className="login-method" style={{background: '#e7f3ff', border: '2px solid #667eea'}}>
+                  <h3 style={{color: '#667eea'}}>🔐 Login with Passkey (No Username)</h3>
+                  <p className="hint">Use your registered passkey to login instantly - no username needed!</p>
+                  <button onClick={handleUsernamelessLogin} className="btn btn-primary" disabled={isLoading}>
+                    {isLoading ? 'Authenticating...' : 'Login with Passkey'}
+                  </button>
+                </div>
+
+                <div className="divider">OR</div>
+
                 <div className="login-method">
                   <h3>Login with Passkey</h3>
                   <form onSubmit={handlePasskeyLogin}>

@@ -24,7 +24,7 @@ from webauthn.helpers import (
     bytes_to_base64url,
     base64url_to_bytes,
 )
-from database import init_db, get_db, User
+from database import init_db, get_db, User, Passkey
 
 app = FastAPI(title="FIDO2 Passkey Auth API")
 
@@ -51,9 +51,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 security = HTTPBearer()
 
-# Store active WebSocket connections and pending registrations
+# Store active WebSocket connections, pending registrations, and challenges
 active_websockets: Dict[str, WebSocket] = {}
 pending_registrations: Dict[str, dict] = {}
+challenges: Dict[str, dict] = {}
 
 
 class UsernameRequest(BaseModel):
@@ -244,15 +245,22 @@ def register_finish(
         credential_id_bytes = verification.credential_id
         credential_id = bytes_to_base64url(credential_id_bytes)
 
-        # Update user's passkey
-        user.credential_id = credential_id
-        user.public_key = bytes_to_base64url(verification.credential_public_key)
-        user.sign_count = verification.sign_count
+        # Create new passkey record
+        new_passkey = Passkey(
+            user_id=user.id,
+            credential_id=credential_id,
+            public_key=bytes_to_base64url(verification.credential_public_key),
+            sign_count=verification.sign_count,
+            aaguid=verification.aaguid.uuid if verification.aaguid else None,
+            name=request.display_name or "Registered Passkey",
+            created_at=datetime.utcnow().isoformat()
+        )
+        db.add(new_passkey)
         db.commit()
 
         return {
             "message": "Passkey registered successfully",
-            "credential_id": user.credential_id
+            "credential_id": credential_id
         }
 
     except Exception as e:
@@ -572,10 +580,17 @@ async def mobile_register_finish(session_id: str, credential: dict, db: Session 
         credential_id_bytes = verification.credential_id
         credential_id = bytes_to_base64url(credential_id_bytes)
 
-        # Update user's passkey
-        user.credential_id = credential_id
-        user.public_key = bytes_to_base64url(verification.credential_public_key)
-        user.sign_count = verification.sign_count
+        # Create new passkey record
+        new_passkey = Passkey(
+            user_id=user.id,
+            credential_id=credential_id,
+            public_key=bytes_to_base64url(verification.credential_public_key),
+            sign_count=verification.sign_count,
+            aaguid=verification.aaguid.uuid if verification.aaguid else None,
+            name=registration.get("display_name", "Mobile Passkey"),
+            created_at=datetime.utcnow().isoformat()
+        )
+        db.add(new_passkey)
         db.commit()
 
         # Mark as completed
@@ -644,20 +659,24 @@ def login_start(request: UsernameRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if not user.credential_id:
+    # Get user's passkeys from Passkey table
+    passkeys = db.query(Passkey).filter(Passkey.user_id == user.id).all()
+
+    if not passkeys:
         raise HTTPException(status_code=400, detail="No passkey registered. Please register a passkey first.")
 
     # Import PublicKeyCredentialDescriptor
     from webauthn.helpers.structs import PublicKeyCredentialDescriptor
 
-    # Generate authentication options
+    # Generate authentication options with all user's passkeys
     options = generate_authentication_options(
         rp_id=RP_ID,
         allow_credentials=[
             PublicKeyCredentialDescriptor(
-                id=base64url_to_bytes(user.credential_id),
+                id=base64url_to_bytes(pk.credential_id),
                 type="public-key"
             )
+            for pk in passkeys
         ],
     )
 
@@ -667,9 +686,10 @@ def login_start(request: UsernameRequest, db: Session = Depends(get_db)):
         "timeout": options.timeout,
         "allowCredentials": [
             {
-                "id": user.credential_id,
+                "id": pk.credential_id,
                 "type": "public-key"
             }
+            for pk in passkeys
         ],
         "userVerification": options.user_verification.value if options.user_verification else "preferred"
     }
@@ -692,8 +712,20 @@ def login_finish(request: AssertionResponse, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if not user.credential_id:
-        raise HTTPException(status_code=400, detail="No passkey registered")
+    # Get credential ID from assertion
+    credential_id = assertion.get("id", "")
+
+    if not credential_id:
+        raise HTTPException(status_code=400, detail="Invalid assertion: missing credential ID")
+
+    # Find passkey by credential_id
+    passkey = db.query(Passkey).filter(
+        Passkey.credential_id == credential_id,
+        Passkey.user_id == user.id
+    ).first()
+
+    if not passkey:
+        raise HTTPException(status_code=404, detail="Passkey not found")
 
     try:
         # The webauthn library expects JSON-serialized assertion
@@ -702,12 +734,125 @@ def login_finish(request: AssertionResponse, db: Session = Depends(get_db)):
             expected_challenge=challenge,
             expected_rp_id=RP_ID,
             expected_origin=RP_ORIGINS[0],
-            credential_public_key=base64url_to_bytes(user.public_key),
-            credential_current_sign_count=user.sign_count,
+            credential_public_key=base64url_to_bytes(passkey.public_key),
+            credential_current_sign_count=passkey.sign_count,
         )
 
         # Update sign count
-        user.sign_count = verification.new_sign_count
+        passkey.sign_count = verification.new_sign_count
+        db.commit()
+
+        # Create JWT token
+        access_token = create_access_token({"sub": user.username})
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "message": "Authentication successful",
+            "username": user.username,
+            "display_name": user.display_name
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Authentication failed: {str(e)}")
+
+
+# Usernameless authentication endpoints
+@app.post("/auth/login/usernameless/start")
+def login_usernameless_start(db: Session = Depends(get_db)):
+    """Start usernameless WebAuthn authentication - no username required"""
+    # Get all registered passkeys for allowCredentials list
+    passkeys = db.query(Passkey).all()
+
+    if not passkeys:
+        raise HTTPException(status_code=400, detail="No passkeys registered yet")
+
+    from webauthn.helpers.structs import PublicKeyCredentialDescriptor
+
+    # Create allowCredentials list from all passkeys
+    allow_credentials = [
+        PublicKeyCredentialDescriptor(
+            id=base64url_to_bytes(pk.credential_id),
+            type="public-key"
+        )
+        for pk in passkeys
+    ]
+
+    # Generate authentication options
+    options = generate_authentication_options(
+        rp_id=RP_ID,
+        allow_credentials=allow_credentials,
+        user_verification="preferred",
+    )
+
+    # Store challenge in session (using in-memory for demo)
+    # In production, use Redis or proper session store
+    challenges[bytes_to_base64url(options.challenge)] = {
+        "challenge": options.challenge,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    return {
+        "challenge": bytes_to_base64url(options.challenge),
+        "options": {
+            "challenge": bytes_to_base64url(options.challenge),
+            "rpId": options.rp_id,
+            "timeout": options.timeout,
+            "allowCredentials": [
+                {
+                    "id": pk.credential_id,
+                    "type": "public-key"
+                }
+                for pk in passkeys
+            ],
+            "userVerification": options.user_verification.value
+        }
+    }
+
+
+class AssertionResponseUsernameless(BaseModel):
+    assertion: dict
+    challenge: str
+
+
+@app.post("/auth/login/usernameless/finish")
+def login_usernameless_finish(request: AssertionResponseUsernameless, db: Session = Depends(get_db)):
+    """Complete usernameless WebAuthn authentication"""
+    assertion = request.assertion
+    challenge = base64url_to_bytes(request.challenge)
+
+    # Get credential ID from assertion
+    credential_id = assertion.get("id", "")
+
+    if not credential_id:
+        raise HTTPException(status_code=400, detail="Invalid assertion: missing credential ID")
+
+    # Find passkey and user by credential ID
+    passkey = db.query(Passkey).filter(Passkey.credential_id == credential_id).first()
+
+    if not passkey:
+        raise HTTPException(status_code=404, detail="Passkey not found")
+
+    user = db.query(User).filter(User.id == passkey.user_id).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    try:
+        # Verify authentication
+        verification = verify_authentication_response(
+            credential=assertion,
+            expected_challenge=challenge,
+            expected_rp_id=RP_ID,
+            expected_origin=RP_ORIGINS[0],
+            credential_public_key=base64url_to_bytes(passkey.public_key),
+            credential_current_sign_count=passkey.sign_count,
+        )
+
+        # Update sign count
+        passkey.sign_count = verification.new_sign_count
         db.commit()
 
         # Create JWT token
@@ -729,36 +874,38 @@ def login_finish(request: AssertionResponse, db: Session = Depends(get_db)):
 
 # Passkey management endpoints
 @app.get("/auth/passkeys")
-def list_passkeys(current_user: User = Depends(get_current_user)):
+def list_passkeys(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """List all passkeys for current user"""
-    passkeys = []
-
-    if current_user.credential_id:
-        passkeys.append({
-            "credential_id": current_user.credential_id,
-            "created_at": "N/A"
-        })
+    # Get all passkeys for current user
+    passkeys = db.query(Passkey).filter(Passkey.user_id == current_user.id).all()
 
     return {
         "username": current_user.username,
-        "passkeys": passkeys,
-        "has_passkey": current_user.credential_id is not None
+        "passkeys": [
+            {
+                "id": pk.id,
+                "credential_id": pk.credential_id,
+                "name": pk.name,
+                "created_at": pk.created_at
+            }
+            for pk in passkeys
+        ],
+        "has_passkey": len(passkeys) > 0
     }
 
 
 @app.delete("/auth/passkeys")
 def delete_passkey(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Delete passkey for current user"""
-    if not current_user.credential_id:
-        raise HTTPException(status_code=404, detail="No passkey found")
-
-    current_user.credential_id = None
-    current_user.public_key = None
-    current_user.sign_count = 0
+    """Delete all passkeys for current user"""
+    # Delete all passkeys for current user
+    deleted_count = db.query(Passkey).filter(Passkey.user_id == current_user.id).delete()
     db.commit()
 
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No passkeys found")
+
     return {
-        "message": "Passkey deleted successfully. You can now login with password."
+        "message": f"Deleted {deleted_count} passkey(s) successfully. You can now login with password."
     }
 
 
@@ -773,17 +920,19 @@ def get_user(username: str, db: Session = Depends(get_db)):
     return {
         "username": user.username,
         "display_name": user.display_name,
-        "has_passkey": user.credential_id is not None
+        "has_passkey": len(db.query(Passkey).filter(Passkey.user_id == user.id).all()) > 0
     }
 
 
 @app.get("/auth/me")
-def get_me(current_user: User = Depends(get_current_user)):
+def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get current authenticated user info"""
+    # Check if user has passkeys
+    has_passkey = len(db.query(Passkey).filter(Passkey.user_id == current_user.id).all()) > 0
     return {
         "username": current_user.username,
         "display_name": current_user.display_name,
-        "has_passkey": current_user.credential_id is not None
+        "has_passkey": has_passkey
     }
 
 

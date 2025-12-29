@@ -172,6 +172,43 @@ async function getQrStatus(sessionId, token) {
   return response.json();
 }
 
+// Usernameless login functions
+async function loginUsernamelessStart() {
+  const response = await fetch(`${API_BASE}/auth/login/usernameless/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Usernameless login start failed');
+  }
+
+  return response.json();
+}
+
+async function loginUsernamelessFinish(assertion, challenge) {
+  const response = await fetch(`${API_BASE}/auth/login/usernameless/finish`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      assertion,
+      challenge,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Usernameless authentication failed');
+  }
+
+  return response.json();
+}
+
 export {
   registerStart,
   registerFinish,
@@ -182,4 +219,6 @@ export {
   deletePasskey,
   registerQrStart,
   getQrStatus,
+  loginUsernamelessStart,
+  loginUsernamelessFinish,
 };

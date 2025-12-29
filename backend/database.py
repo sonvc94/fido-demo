@@ -1,6 +1,6 @@
-from sqlalchemy import create_engine, Column, String, Integer
+from sqlalchemy import create_engine, Column, String, Integer, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 import os
 import bcrypt
 
@@ -20,10 +20,25 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     display_name = Column(String, nullable=False)
-    credential_id = Column(String, nullable=True)
-    public_key = Column(String, nullable=True)
+
+    # Relationship to passkeys
+    passkeys = relationship("Passkey", back_populates="user", cascade="all, delete-orphan")
+
+
+class Passkey(Base):
+    __tablename__ = "passkeys"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    credential_id = Column(String, unique=True, index=True, nullable=False)
+    public_key = Column(String, nullable=False)
     sign_count = Column(Integer, default=0)
     aaguid = Column(String, nullable=True)
+    name = Column(String, nullable=True)  # User-friendly name (e.g., "iPhone Face ID")
+    created_at = Column(String, nullable=True)
+
+    # Relationship to user
+    user = relationship("User", back_populates="passkeys")
 
 
 def init_db():
