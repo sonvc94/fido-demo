@@ -193,9 +193,9 @@ def register_start(
     )
 
     # Convert options to JSON-compatible format
+    # For localhost, omit rp.id as it's implied (best practice for localhost development)
     options_dict = {
         "rp": {
-            "id": options.rp.id,
             "name": options.rp.name,
         },
         "user": {
@@ -211,6 +211,10 @@ def register_start(
             "userVerification": "preferred",
         }
     }
+
+    # Only include rp.id if it's not localhost (localhost is implied)
+    if RP_ID != "localhost" and RP_ID != "127.0.0.1":
+        options_dict["rp"]["id"] = options.rp.id
 
     return {
         "challenge": bytes_to_base64url(options.challenge),
@@ -764,7 +768,7 @@ def login_start(request: UsernameRequest, db: Session = Depends(get_db)):
             }
             for pk in passkeys
         ],
-        "userVerification": options.user_verification.value if options.user_verification else "preferred"
+        "userVerification": (options.user_verification if isinstance(options.user_verification, str) else options.user_verification.value) if options.user_verification else "preferred"
     }
 
     return {
@@ -897,7 +901,7 @@ def login_usernameless_start(db: Session = Depends(get_db)):
                 }
                 for pk in passkeys
             ],
-            "userVerification": options.user_verification.value
+            "userVerification": (options.user_verification if isinstance(options.user_verification, str) else options.user_verification.value) if options.user_verification else "preferred"
         }
     }
 
