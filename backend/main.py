@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, Security, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
@@ -9,6 +9,7 @@ import os
 import json
 import bcrypt
 import jwt
+from jwt.exceptions import InvalidTokenError
 import qrcode
 import io
 import uuid
@@ -117,7 +118,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
         return username
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.JWTError:
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
@@ -220,6 +221,7 @@ def register_start(
 @app.post("/auth/register/finish")
 def register_finish(
     request: CredentialResponse,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -234,13 +236,30 @@ def register_finish(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Get actual origin from request headers
+    origin = http_request.headers.get("origin", "")
+    if not origin:
+        # Fallback to referer or use default
+        origin = http_request.headers.get("referer", "").split("/")[0:3]
+        if origin:
+            origin = "/".join(origin)
+        else:
+            origin = RP_ORIGINS[0]
+
+    # Verify origin is allowed
+    if origin not in RP_ORIGINS and not any(origin.startswith(o.rstrip("/")) for o in RP_ORIGINS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Origin {origin} not in allowed origins: {RP_ORIGINS}"
+        )
+
     try:
         # The webauthn library expects JSON-serialized credential
         verification = verify_registration_response(
             credential=credential,
             expected_challenge=challenge,
             expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGINS[0],
+            expected_origin=origin,
         )
 
         # Get credential ID from the verified credential
@@ -487,9 +506,44 @@ def mobile_register_page(session_id: str):
                     .replace(/=/g, '');
             }
 
+            // Check WebAuthn support and HTTPS requirement
+            function checkWebAuthnSupport() {
+                const resultDiv = document.getElementById('result');
+
+                // Check if WebAuthn is available
+                if (!window.navigator || !window.navigator.credentials) {
+                    resultDiv.innerHTML = '<div class="error">⚠️ Your browser does not support WebAuthn. Please use a modern browser like Safari (iOS 16.3+), Chrome, or Firefox.</div>';
+                    return false;
+                }
+
+                // Check if served over HTTPS (required for WebAuthn)
+                const isHttps = window.location.protocol === 'https:';
+                const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
+                if (!isHttps && !isLocalhost) {
+                    resultDiv.innerHTML = '<div class="error">⚠️ WebAuthn requires HTTPS. This page is served over HTTP. Please access this page via HTTPS or localhost.</div>';
+                    return false;
+                }
+
+                return true;
+            }
+
+            // Check WebAuthn support on page load
+            window.addEventListener('DOMContentLoaded', function() {
+                checkWebAuthnSupport();
+            });
+
             async function registerPasskey() {
                 const btn = document.getElementById('registerBtn');
                 const result = document.getElementById('result');
+
+                // Check requirements before proceeding
+                if (!checkWebAuthnSupport()) {
+                    btn.disabled = true;
+                    btn.textContent = 'Not Supported';
+                    return;
+                }
+
                 btn.disabled = true;
                 btn.textContent = 'Registering...';
 
@@ -551,7 +605,7 @@ def mobile_register_page(session_id: str):
 
 
 @app.post("/api/mobile/register/finish/{session_id}")
-async def mobile_register_finish(session_id: str, credential: dict, db: Session = Depends(get_db)):
+async def mobile_register_finish(session_id: str, credential: dict, http_request: Request, db: Session = Depends(get_db)):
     """Complete registration from mobile device"""
     if session_id not in pending_registrations:
         raise HTTPException(status_code=404, detail="Session not found or expired")
@@ -569,13 +623,30 @@ async def mobile_register_finish(session_id: str, credential: dict, db: Session 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Get actual origin from request headers
+    origin = http_request.headers.get("origin", "")
+    if not origin:
+        # Fallback to referer or use default
+        origin = http_request.headers.get("referer", "").split("/")[0:3]
+        if origin:
+            origin = "/".join(origin)
+        else:
+            origin = RP_ORIGINS[0]
+
+    # Verify origin is allowed
+    if origin not in RP_ORIGINS and not any(origin.startswith(o.rstrip("/")) for o in RP_ORIGINS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Origin {origin} not in allowed origins: {RP_ORIGINS}"
+        )
+
     try:
         # Verify registration
         verification = verify_registration_response(
             credential=credential,
             expected_challenge=challenge,
             expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGINS[0],
+            expected_origin=origin,
         )
 
         # Get credential ID
@@ -703,7 +774,7 @@ def login_start(request: UsernameRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login/finish")
-def login_finish(request: AssertionResponse, db: Session = Depends(get_db)):
+def login_finish(request: AssertionResponse, http_request: Request, db: Session = Depends(get_db)):
     """Complete WebAuthn authentication"""
     username = request.username
     assertion = request.assertion
@@ -729,13 +800,30 @@ def login_finish(request: AssertionResponse, db: Session = Depends(get_db)):
     if not passkey:
         raise HTTPException(status_code=404, detail="Passkey not found")
 
+    # Get actual origin from request headers
+    origin = http_request.headers.get("origin", "")
+    if not origin:
+        # Fallback to referer or use default
+        origin = http_request.headers.get("referer", "").split("/")[0:3]
+        if origin:
+            origin = "/".join(origin)
+        else:
+            origin = RP_ORIGINS[0]
+
+    # Verify origin is allowed
+    if origin not in RP_ORIGINS and not any(origin.startswith(o.rstrip("/")) for o in RP_ORIGINS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Origin {origin} not in allowed origins: {RP_ORIGINS}"
+        )
+
     try:
         # The webauthn library expects JSON-serialized assertion
         verification = verify_authentication_response(
             credential=assertion,
             expected_challenge=challenge,
             expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGINS[0],
+            expected_origin=origin,
             credential_public_key=base64url_to_bytes(passkey.public_key),
             credential_current_sign_count=passkey.sign_count,
         )
@@ -820,7 +908,7 @@ class AssertionResponseUsernameless(BaseModel):
 
 
 @app.post("/auth/login/usernameless/finish")
-def login_usernameless_finish(request: AssertionResponseUsernameless, db: Session = Depends(get_db)):
+def login_usernameless_finish(request: AssertionResponseUsernameless, http_request: Request, db: Session = Depends(get_db)):
     """Complete usernameless WebAuthn authentication"""
     assertion = request.assertion
     challenge = base64url_to_bytes(request.challenge)
@@ -842,13 +930,30 @@ def login_usernameless_finish(request: AssertionResponseUsernameless, db: Sessio
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Get actual origin from request headers
+    origin = http_request.headers.get("origin", "")
+    if not origin:
+        # Fallback to referer or use default
+        origin = http_request.headers.get("referer", "").split("/")[0:3]
+        if origin:
+            origin = "/".join(origin)
+        else:
+            origin = RP_ORIGINS[0]
+
+    # Verify origin is allowed
+    if origin not in RP_ORIGINS and not any(origin.startswith(o.rstrip("/")) for o in RP_ORIGINS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Origin {origin} not in allowed origins: {RP_ORIGINS}"
+        )
+
     try:
         # Verify authentication
         verification = verify_authentication_response(
             credential=assertion,
             expected_challenge=challenge,
             expected_rp_id=RP_ID,
-            expected_origin=RP_ORIGINS[0],
+            expected_origin=origin,
             credential_public_key=base64url_to_bytes(passkey.public_key),
             credential_current_sign_count=passkey.sign_count,
         )

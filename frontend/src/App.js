@@ -136,8 +136,8 @@ function App() {
       setQrSessionId(result.session_id);
 
       // Connect to WebSocket for real-time updates
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${wsProtocol}//${window.location.hostname}:8000/ws/register/${result.session_id}`);
+      const wsUrl = API_BASE.replace(/^http/, 'ws');
+      const ws = new WebSocket(`${wsUrl}/ws/register/${result.session_id}`);
 
       ws.onopen = () => {
         console.log('WebSocket connected');
