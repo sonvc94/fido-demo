@@ -45,6 +45,7 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setUser(data);
+        setUsername(data.username);  // Set username from server response
         setHasPasskey(data.has_passkey);
         setIsAuthenticated(true);
         fetchPasskeys();
@@ -78,6 +79,7 @@ function App() {
       setMessage('Login successful!');
       setIsAuthenticated(true);
       setUser(result);
+      setUsername(result.username);  // Set username from login response
       setHasPasskey(result.has_passkey);
       setActiveTab('dashboard');
     } catch (error) {
