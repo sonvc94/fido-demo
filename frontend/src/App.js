@@ -111,7 +111,7 @@ function App() {
         },
       });
 
-      await registerFinish(username, credentialToObject(credential), challenge, token);
+      await registerFinish(username, displayName, credentialToObject(credential), challenge, token);
       setMessage('Passkey registered successfully!');
       setHasPasskey(true);
       fetchPasskeys();

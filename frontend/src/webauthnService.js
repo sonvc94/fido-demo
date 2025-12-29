@@ -21,7 +21,7 @@ async function registerStart(username, displayName, token) {
   return response.json();
 }
 
-async function registerFinish(username, credential, challenge, token) {
+async function registerFinish(username, displayName, credential, challenge, token) {
   const response = await fetch(`${API_BASE}/auth/register/finish`, {
     method: 'POST',
     headers: {
@@ -30,6 +30,7 @@ async function registerFinish(username, credential, challenge, token) {
     },
     body: JSON.stringify({
       username,
+      display_name: displayName,
       credential,
       challenge,
     }),

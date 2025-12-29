@@ -78,6 +78,7 @@ class QRRegisterRequest(BaseModel):
 
 class CredentialResponse(BaseModel):
     username: str
+    display_name: Optional[str] = None
     credential: dict
     challenge: str
     session_id: Optional[str] = None
