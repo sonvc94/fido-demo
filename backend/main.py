@@ -77,7 +77,7 @@ class QRRegisterRequest(BaseModel):
 
 
 class CredentialResponse(BaseModel):
-    username: str
+    username: Optional[str] = None  # Now optional - use authenticated user
     display_name: Optional[str] = None
     credential: dict
     challenge: str
@@ -224,7 +224,8 @@ def register_finish(
     db: Session = Depends(get_db)
 ):
     """Complete WebAuthn registration - requires authentication"""
-    username = request.username
+    # Use authenticated user's username instead of request body
+    username = current_user.username
     credential = request.credential
     challenge = base64url_to_bytes(request.challenge)
 
