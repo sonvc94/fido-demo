@@ -157,6 +157,10 @@ def password_login(request: PasswordLoginRequest, db: Session = Depends(get_db))
     if not bcrypt.checkpw(request.password.encode('utf-8'), user.password_hash.encode('utf-8')):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # Check if user has passkeys
+    passkeys = db.query(Passkey).filter(Passkey.user_id == user.id).all()
+    has_passkey = len(passkeys) > 0
+
     # Create JWT token
     access_token = create_access_token({"sub": user.username})
 
@@ -164,7 +168,8 @@ def password_login(request: PasswordLoginRequest, db: Session = Depends(get_db))
         "access_token": access_token,
         "token_type": "bearer",
         "username": user.username,
-        "display_name": user.display_name
+        "display_name": user.display_name,
+        "has_passkey": has_passkey
     }
 
 
