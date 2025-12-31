@@ -173,12 +173,51 @@ body {
   padding: 15px;
   background: #f9f9f9;
   border-radius: 8px;
+  position: relative;
 }
 
 .login-method h3 {
   font-size: 1rem;
   color: #555;
   margin-bottom: 15px;
+}
+
+/* Recommended Login Method Styling */
+.login-method-recommended {
+  background: linear-gradient(135deg, #e7f3ff 0%, #f0f7ff 100%);
+  border: 2px solid #667eea;
+  padding: 20px;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+}
+
+.recommended-badge {
+  position: absolute;
+  top: -12px;
+  right: 15px;
+  background: linear-gradient(135deg, #ffa500 0%, #ff8c00 100%);
+  color: white;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  box-shadow: 0 2px 8px rgba(255, 165, 0, 0.4);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.login-method-recommended h3 {
+  color: #667eea;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-top: 5px;
 }
 
 .divider {
@@ -256,6 +295,86 @@ body {
   margin-bottom: 20px;
 }
 
+/* Registration Prompt Banner */
+.registration-prompt-banner {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 25px;
+  margin-bottom: 25px;
+  color: white;
+  animation: slideDown 0.5s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.banner-content {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.banner-icon {
+  font-size: 2.5rem;
+  flex-shrink: 0;
+}
+
+.banner-text {
+  flex: 1;
+}
+
+.banner-text h3 {
+  font-size: 1.2rem;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.banner-text p {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  opacity: 0.95;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.banner-actions .btn {
+  flex: 1;
+  padding: 12px 20px;
+  font-size: 0.95rem;
+}
+
+.banner-actions .btn-primary {
+  background: white;
+  color: #667eea;
+}
+
+.banner-actions .btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 20px rgba(255, 255, 255, 0.3);
+  background: #f8f9fa;
+}
+
+.banner-actions .btn-secondary {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 2px solid white;
+}
+
+.banner-actions .btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 .passkey-list {
   margin: 20px 0;
 }
@@ -323,5 +442,28 @@ body {
 
   .login-methods {
     gap: 15px;
+  }
+
+  .banner-content {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .banner-icon {
+    align-self: center;
+  }
+
+  .banner-actions {
+    flex-direction: column;
+  }
+
+  .recommended-badge {
+    position: static;
+    display: inline-block;
+    margin-bottom: 10px;
+  }
+
+  .login-method-recommended {
+    text-align: center;
   }
 }

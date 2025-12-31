@@ -17,6 +17,7 @@ function App() {
   const [qrCode, setQrCode] = useState(null);
   const [qrSessionId, setQrSessionId] = useState(null);
   const [qrStatus, setQrStatus] = useState('waiting');
+  const [showRegistrationPrompt, setShowRegistrationPrompt] = useState(false);
   const wsRef = useRef(null);
 
   const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
@@ -49,6 +50,9 @@ function App() {
         setHasPasskey(data.has_passkey);
         setIsAuthenticated(true);
         fetchPasskeys();
+
+        // Don't show prompt on page load, only after fresh password login
+        setShowRegistrationPrompt(false);
       } else {
         localStorage.removeItem('token');
         setToken(null);
@@ -81,6 +85,12 @@ function App() {
       setUser(result);
       setUsername(result.username);  // Set username from login response
       setHasPasskey(result.has_passkey);
+
+      // Show registration prompt if user doesn't have a passkey
+      if (!result.has_passkey) {
+        setShowRegistrationPrompt(true);
+      }
+
       setActiveTab('dashboard');
     } catch (error) {
       setMessage(error.message || 'Login failed');
@@ -116,6 +126,7 @@ function App() {
       await registerFinish(username, displayName, credentialToObject(credential), challenge, token);
       setMessage('Passkey registered successfully!');
       setHasPasskey(true);
+      setShowRegistrationPrompt(false); // Hide the prompt after successful registration
       fetchPasskeys();
     } catch (error) {
       setMessage(error.message || 'Registration failed');
@@ -149,6 +160,7 @@ function App() {
           setQrStatus('completed');
           setMessage('Passkey registered successfully via QR code!');
           setHasPasskey(true);
+          setShowRegistrationPrompt(false); // Hide the prompt after successful registration
           fetchPasskeys();
           ws.close();
         }
@@ -173,6 +185,7 @@ function App() {
             setQrStatus('completed');
             setMessage('Passkey registered successfully via QR code!');
             setHasPasskey(true);
+            setShowRegistrationPrompt(false); // Hide the prompt after successful registration
             fetchPasskeys();
           }
         } catch (error) {
@@ -383,6 +396,36 @@ function App() {
 
             {activeTab === 'dashboard' && (
               <div className="tab-content">
+                {/* Registration Prompt Banner */}
+                {showRegistrationPrompt && !hasPasskey && (
+                  <div className="registration-prompt-banner">
+                    <div className="banner-content">
+                      <div className="banner-icon">🔐</div>
+                      <div className="banner-text">
+                        <h3>Set Up Biometric Login for Faster Access!</h3>
+                        <p>Register a passkey now to login instantly with Face ID, Touch ID, or Windows Hello - no password needed next time!</p>
+                      </div>
+                    </div>
+                    <div className="banner-actions">
+                      <button
+                        onClick={() => {
+                          setActiveTab('manage-passkeys');
+                          setShowRegistrationPrompt(false);
+                        }}
+                        className="btn btn-primary"
+                      >
+                        Set Up Biometric Login
+                      </button>
+                      <button
+                        onClick={() => setShowRegistrationPrompt(false)}
+                        className="btn btn-secondary"
+                      >
+                        Skip for Now
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="user-info">
                   <p><strong>Username:</strong> {user.username}</p>
                   <p><strong>Display Name:</strong> {user.display_name}</p>
@@ -532,10 +575,11 @@ function App() {
               <h2>Login</h2>
 
               <div className="login-methods">
-                {/* Usernameless Passkey Login - No username required */}
-                <div className="login-method" style={{background: '#e7f3ff', border: '2px solid #667eea'}}>
-                  <h3 style={{color: '#667eea'}}>🔐 Login with Passkey (No Username)</h3>
-                  <p className="hint">Use your registered passkey to login instantly - no username needed!</p>
+                {/* Usernameless Passkey Login - No username required - RECOMMENDED */}
+                <div className="login-method login-method-recommended">
+                  <div className="recommended-badge">⭐ RECOMMENDED</div>
+                  <h3>🔐 Login with Passkey (No Username)</h3>
+                  <p className="hint">Use your registered passkey to login instantly - no username needed! The fastest and most secure way to login.</p>
                   <button onClick={handleUsernamelessLogin} className="btn btn-primary" disabled={isLoading}>
                     {isLoading ? 'Authenticating...' : 'Login with Passkey'}
                   </button>
@@ -545,6 +589,7 @@ function App() {
 
                 <div className="login-method">
                   <h3>Login with Passkey</h3>
+                  <p className="hint">Already have a passkey? Enter your username to login.</p>
                   <form onSubmit={handlePasskeyLogin}>
                     <div className="form-group">
                       <label htmlFor="passkey-username">Username</label>
@@ -567,6 +612,7 @@ function App() {
 
                 <div className="login-method">
                   <h3>Login with Password</h3>
+                  <p className="hint">Use your password if you haven't set up biometric login yet.</p>
                   <form onSubmit={handlePasswordLogin}>
                     <div className="form-group">
                       <label htmlFor="password-username">Username</label>
