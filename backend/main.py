@@ -26,6 +26,8 @@ from webauthn.helpers import (
     base64url_to_bytes,
 )
 from database import init_db, get_db, User, Passkey
+import boto3
+from botocore.exceptions import ClientError
 
 app = FastAPI(title="FIDO2 Passkey Auth API")
 
@@ -798,6 +800,14 @@ def login_finish(request: AssertionResponse, http_request: Request, db: Session 
     credential_id = assertion.get("id", "")
 
     if not credential_id:
+        raise HTTPException(status_code=400, detail="Credential ID missing in assertion")
+    
+    # ... (rest of local login_finish logic) ...
+    # Note: Cutting short here to append Cognito logic below, will need to be careful with line matching.
+    # Actually, it's better to append the new Cognito code at the END of the file or in a cleaner block.
+    # Let me re-read the file to append correctly instead of replacing a huge chunk and potentially missing "rest of function".
+    # I will cancel this replace and do a cleaner append or insert.
+
         raise HTTPException(status_code=400, detail="Invalid assertion: missing credential ID")
 
     # Find passkey by credential_id
@@ -1050,6 +1060,300 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
         "display_name": current_user.display_name,
         "has_passkey": has_passkey
     }
+
+
+# ==========================================
+# AWS Cognito Integration
+# ==========================================
+
+# Cognito Configuration
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
+COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
+COGNITO_CLIENT_SECRET = os.getenv("COGNITO_CLIENT_SECRET")
+COGNITO_REGION = os.getenv("COGNITO_REGION")
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+# Initialize Cognito Client
+try:
+    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+        cognito_client = boto3.client(
+            'cognito-idp',
+            region_name=COGNITO_REGION,
+            aws_access_key_id=AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+        )
+    else:
+        # Use role-based authentication or default profile
+        cognito_client = boto3.client('cognito-idp', region_name=COGNITO_REGION)
+except Exception as e:
+    print(f"Warning: Failed to initialize Cognito client: {e}")
+    cognito_client = None
+
+
+import hmac
+import hashlib
+
+def get_secret_hash(username, client_id, client_secret):
+    msg = username + client_id
+    dig = hmac.new(str(client_secret).encode('utf-8'), 
+                   msg = str(msg).encode('utf-8'), digestmod=hashlib.sha256).digest()
+    d2 = base64.b64encode(dig).decode()
+    return d2
+
+
+class CognitoLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class CognitoRegisterStartRequest(BaseModel):
+    access_token: str
+
+
+class CognitoRegisterFinishRequest(BaseModel):
+    access_token: str
+    credential: dict
+
+
+class CognitoLoginStartRequest(BaseModel):
+    username: str
+
+
+class CognitoLoginFinishRequest(BaseModel):
+    username: str
+    challenge_responses: dict
+    session: str
+
+
+@app.post("/auth/cognito/login-password")
+def cognito_password_login(request: CognitoLoginRequest):
+    """Login to Cognito with username/password to get Access Token"""
+    if not cognito_client:
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        auth_params = {
+            'USERNAME': request.username,
+            'PASSWORD': request.password
+        }
+        
+        if COGNITO_CLIENT_SECRET:
+            auth_params['SECRET_HASH'] = get_secret_hash(
+                request.username, COGNITO_CLIENT_ID, COGNITO_CLIENT_SECRET
+            )
+        
+        import sys
+        print(f"DEBUG: Calling initiate_auth with params: {auth_params}", file=sys.stderr, flush=True)
+
+        response = cognito_client.initiate_auth(
+            ClientId=COGNITO_CLIENT_ID,
+            AuthFlow='USER_PASSWORD_AUTH',
+            AuthParameters=auth_params
+        )
+        print(f"DEBUG_COGNITO_RESPONSE: {response}", file=sys.stderr, flush=True)
+        
+        if 'AuthenticationResult' in response:
+            return response['AuthenticationResult']
+        elif 'ChallengeName' in response:
+            return response
+        else:
+            raise KeyError('AuthenticationResult')
+            
+    except ClientError as e:
+        print(f"DEBUG: ClientError: {e}", file=sys.stderr, flush=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"DEBUG: Exception: {e}", file=sys.stderr, flush=True)
+        # Import tracebaack to print stack trace
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/auth/cognito/register/start")
+def cognito_register_start(request: CognitoRegisterStartRequest):
+    """Start WebAuthn registration with Cognito"""
+    if not cognito_client:
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        response = cognito_client.start_web_authn_registration(
+            AccessToken=request.access_token
+        )
+        return response['CredentialCreationOptions']
+    except ClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    force=True
+)
+logger = logging.getLogger(__name__)
+
+@app.post("/auth/cognito/register/finish")
+def cognito_register_finish(request: CognitoRegisterFinishRequest):
+    """Complete WebAuthn registration with Cognito"""
+    if not cognito_client:
+        logger.error("Cognito client not initialized")
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        kwargs = {
+            'AccessToken': request.access_token,
+            'Credential': request.credential
+        }
+        logger.info(f"Calling complete_web_authn_registration with: {kwargs}")
+
+        response = cognito_client.complete_web_authn_registration(**kwargs)
+        logger.info(f"Response from complete_web_authn_registration: {response}")
+        return {"message": "Passkey registered successfully with Cognito", "details": response}
+    except ClientError as e:
+        logger.error(f"ClientError in complete_web_authn_registration: {e}")
+        error_detail = str(e)
+        if hasattr(e, 'response'):
+             logger.error(f"Full AWS Error Response: {e.response}")
+             error_detail = e.response
+        raise HTTPException(status_code=400, detail=error_detail)
+    except Exception as e:
+        logger.exception(f"Unexpected exception in complete_web_authn_registration: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/auth/cognito/login/start")
+def cognito_login_start(request: CognitoLoginStartRequest):
+    """Start WebAuthn login with Cognito (USER_AUTH flow)"""
+    if not cognito_client:
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        auth_params = {
+            'USERNAME': request.username,
+            'PREFERRED_CHALLENGE': 'WEB_AUTHN'
+        }
+        
+        if COGNITO_CLIENT_SECRET:
+            auth_params['SECRET_HASH'] = get_secret_hash(
+                request.username, COGNITO_CLIENT_ID, COGNITO_CLIENT_SECRET
+            )
+
+        response = cognito_client.initiate_auth(
+            ClientId=COGNITO_CLIENT_ID,
+            AuthFlow='USER_AUTH',
+            AuthParameters=auth_params
+        )
+        return response
+    except ClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CognitoSignUpRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/auth/cognito/signup")
+def cognito_signup(request: CognitoSignUpRequest):
+    """Sign up a new user in Cognito"""
+    if not cognito_client:
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        kwargs = {
+            'ClientId': COGNITO_CLIENT_ID,
+            'Username': request.username,
+            'Password': request.password,
+            'UserAttributes': [
+                {
+                    'Name': 'email',
+                    'Value': request.username
+                }
+            ]
+        }
+        
+        if COGNITO_CLIENT_SECRET:
+            kwargs['SecretHash'] = get_secret_hash(
+                request.username, COGNITO_CLIENT_ID, COGNITO_CLIENT_SECRET
+            )
+
+        response = cognito_client.sign_up(**kwargs)
+        return response
+    except ClientError as e:
+        print(f"DEBUG: ClientError: {e}", file=sys.stderr, flush=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"DEBUG: Exception: {e}", file=sys.stderr, flush=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CognitoConfirmSignUpRequest(BaseModel):
+    username: str
+    code: str
+
+
+@app.post("/auth/cognito/confirm-signup")
+def cognito_confirm_signup(request: CognitoConfirmSignUpRequest):
+    """Confirm a new user in Cognito with verification code"""
+    if not cognito_client:
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        kwargs = {
+            'ClientId': COGNITO_CLIENT_ID,
+            'Username': request.username,
+            'ConfirmationCode': request.code,
+        }
+        
+        if COGNITO_CLIENT_SECRET:
+            kwargs['SecretHash'] = get_secret_hash(
+                request.username, COGNITO_CLIENT_ID, COGNITO_CLIENT_SECRET
+            )
+
+        response = cognito_client.confirm_sign_up(**kwargs)
+        return response
+    except ClientError as e:
+        print(f"DEBUG: ClientError: {e}", file=sys.stderr, flush=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"DEBUG: Exception: {e}", file=sys.stderr, flush=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/auth/cognito/login/finish")
+def cognito_login_finish(request: CognitoLoginFinishRequest):
+    """Complete WebAuthn login with Cognito"""
+    if not cognito_client:
+        raise HTTPException(status_code=503, detail="Cognito client not initialized")
+
+    try:
+        responses = request.challenge_responses.copy()
+        responses['USERNAME'] = request.username
+        
+        if COGNITO_CLIENT_SECRET:
+            responses['SECRET_HASH'] = get_secret_hash(
+                request.username, COGNITO_CLIENT_ID, COGNITO_CLIENT_SECRET
+            )
+
+        response = cognito_client.respond_to_auth_challenge(
+            ClientId=COGNITO_CLIENT_ID,
+            ChallengeName='WEB_AUTHN',
+            Session=request.session,
+            ChallengeResponses=responses
+        )
+        return response
+    except ClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

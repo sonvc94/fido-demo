@@ -1,17 +1,69 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
-import { registerStart, registerFinish, loginStart, loginFinish, passwordLogin, getPasskeys, deletePasskey, registerQrStart, getQrStatus, loginUsernamelessStart, loginUsernamelessFinish } from './webauthnService';
+import {
+  registerStart, registerFinish, loginStart, loginFinish, passwordLogin, getPasskeys, deletePasskey,
+  registerQrStart, getQrStatus, loginUsernamelessStart, loginUsernamelessFinish,
+  // Cognito imports
+  cognitoPasswordLogin, cognitoRegisterStart, cognitoRegisterFinish, cognitoLoginStart, cognitoLoginFinish, cognitoSignUp, cognitoConfirmSignUp
+} from './webauthnService';
 
 function App() {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmationCode, setConfirmationCode] = useState('');
   const [message, setMessage] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState(null);
   const [hasPasskey, setHasPasskey] = useState(false);
   const [activeTab, setActiveTab] = useState('login');
+  const [authMode, setAuthMode] = useState('local'); // 'local' or 'cognito'
+  const [cognitoToken, setCognitoToken] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // ... (existing code)
+
+  const handleCognitoSignUp = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setMessage('');
+    console.log('Starting Cognito Sign Up for:', username);
+
+    try {
+      const response = await cognitoSignUp(username, password);
+      console.log('Cognito Sign Up response:', response);
+      setMessage('Sign Up successful! Please enter verification code sent to your email.');
+      console.log('Switching to signup-confirm tab');
+      setActiveTab('signup-confirm');
+    } catch (error) {
+      console.error('Cognito Sign Up error:', error);
+      setMessage(error.message || 'Sign Up failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCognitoConfirmSignUp = async (e) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setMessage('');
+
+    try {
+      await cognitoConfirmSignUp(username, confirmationCode);
+      setMessage('Confirmation successful! You can now login.');
+      setActiveTab('login');
+      setConfirmationCode('');
+    } catch (error) {
+      setMessage(error.message || 'Confirmation failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ... (rest of component)
+
+
+
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [passkeys, setPasskeys] = useState([]);
   const [qrCode, setQrCode] = useState(null);
@@ -23,10 +75,12 @@ function App() {
   const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
-    if (token) {
+    console.log("APP VERSION: v1.1 - Fix Applied (Transports)");
+    // Only fetch user info for local auth mode
+    if (token && authMode === 'local') {
       fetchUserInfo();
     }
-  }, [token]);
+  }, [token, authMode]);
 
   useEffect(() => {
     return () => {
@@ -77,21 +131,28 @@ function App() {
     setMessage('');
 
     try {
-      const result = await passwordLogin(username, password);
-      setToken(result.access_token);
-      localStorage.setItem('token', result.access_token);
-      setMessage('Login successful!');
-      setIsAuthenticated(true);
-      setUser(result);
-      setUsername(result.username);  // Set username from login response
-      setHasPasskey(result.has_passkey);
+      if (authMode === 'local') {
+        const result = await passwordLogin(username, password);
+        setToken(result.access_token);
+        localStorage.setItem('token', result.access_token);
+        setMessage('Login successful!');
+        setIsAuthenticated(true);
+        setUser(result);
+        setUsername(result.username);  // Set username from login response
+        setHasPasskey(result.has_passkey);
 
-      // Show registration prompt if user doesn't have a passkey
-      if (!result.has_passkey) {
-        setShowRegistrationPrompt(true);
+        // Show registration prompt if user doesn't have a passkey
+        if (!result.has_passkey) {
+          setShowRegistrationPrompt(true);
+        }
+        setActiveTab('dashboard');
+      } else {
+        // Cognito Password Login
+        const result = await cognitoPasswordLogin(username, password);
+        setCognitoToken(result.AccessToken);
+        setMessage('Cognito Login successful! You can now register a passkey.');
+        setActiveTab('cognito-register');
       }
-
-      setActiveTab('dashboard');
     } catch (error) {
       setMessage(error.message || 'Login failed');
     } finally {
@@ -105,29 +166,52 @@ function App() {
     setMessage('');
 
     try {
-      const { challenge, options } = await registerStart(username, displayName, token);
-
-      const credential = await navigator.credentials.create({
-        publicKey: {
-          challenge: base64urlToBytes(options.challenge),
-          rp: options.rp,
-          user: {
-            id: base64urlToBytes(options.user.id),
-            name: options.user.name,
-            displayName: options.user.displayName,
+      if (authMode === 'local') {
+        const { challenge, options } = await registerStart(username, displayName, token);
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge: base64urlToBytes(options.challenge),
+            rp: options.rp,
+            user: {
+              id: base64urlToBytes(options.user.id),
+              name: options.user.name,
+              displayName: options.user.displayName,
+            },
+            pubKeyCredParams: options.pubKeyCredParams,
+            timeout: options.timeout,
+            attestation: options.attestation,
+            authenticatorSelection: options.authenticatorSelection,
           },
-          pubKeyCredParams: options.pubKeyCredParams,
-          timeout: options.timeout,
-          attestation: options.attestation,
-          authenticatorSelection: options.authenticatorSelection,
-        },
-      });
+        });
 
-      await registerFinish(username, displayName, credentialToObject(credential), challenge, token);
-      setMessage('Passkey registered successfully!');
-      setHasPasskey(true);
-      setShowRegistrationPrompt(false); // Hide the prompt after successful registration
-      fetchPasskeys();
+        await registerFinish(username, displayName, credentialToObject(credential), challenge, token);
+        setMessage('Passkey registered successfully!');
+        setHasPasskey(true);
+        setShowRegistrationPrompt(false);
+        fetchPasskeys();
+      } else {
+        // Cognito Passkey Registration
+        const options = await cognitoRegisterStart(cognitoToken);
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            challenge: base64urlToBytes(options.challenge),
+            rp: options.rp,
+            user: {
+              id: base64urlToBytes(options.user.id),
+              name: options.user.name,
+              displayName: options.user.displayName,
+            },
+            pubKeyCredParams: options.pubKeyCredParams,
+            timeout: options.timeout,
+            attestation: options.attestation,
+            authenticatorSelection: options.authenticatorSelection,
+          },
+        });
+
+        await cognitoRegisterFinish(cognitoToken, credentialToObject(credential));
+        setMessage('Cognito Passkey registered successfully!');
+        setHasPasskey(true);
+      }
     } catch (error) {
       setMessage(error.message || 'Registration failed');
     } finally {
@@ -209,29 +293,75 @@ function App() {
     setMessage('');
 
     try {
-      const { challenge, options } = await loginStart(username);
+      if (authMode === 'local') {
+        const { challenge, options } = await loginStart(username);
 
-      const credential = await navigator.credentials.get({
-        publicKey: {
-          challenge: base64urlToBytes(options.challenge),
-          rpId: options.rpId,
-          timeout: options.timeout,
-          allowCredentials: options.allowCredentials?.map(cred => ({
-            id: base64urlToBytes(cred.id),
-            type: cred.type,
-          })),
-          userVerification: options.userVerification,
-        },
-      });
+        const credential = await navigator.credentials.get({
+          publicKey: {
+            challenge: base64urlToBytes(options.challenge),
+            rpId: options.rpId,
+            timeout: options.timeout,
+            allowCredentials: options.allowCredentials?.map(cred => ({
+              id: base64urlToBytes(cred.id),
+              type: cred.type,
+            })),
+            userVerification: options.userVerification,
+          },
+        });
 
-      const result = await loginFinish(username, assertionToObject(credential), challenge);
-      setToken(result.access_token);
-      localStorage.setItem('token', result.access_token);
-      setMessage('Authentication successful!');
-      setIsAuthenticated(true);
-      setUser(result);
-      setHasPasskey(true);
-      setActiveTab('dashboard');
+        const result = await loginFinish(username, assertionToObject(credential), challenge);
+        setToken(result.access_token);
+        localStorage.setItem('token', result.access_token);
+        setMessage('Authentication successful!');
+        setIsAuthenticated(true);
+        setUser(result);
+        setHasPasskey(true);
+        setActiveTab('dashboard');
+      } else {
+        // Cognito Passkey Login
+        const startResponse = await cognitoLoginStart(username);
+        console.log("Cognito Login Start Response:", startResponse);
+
+        if (!startResponse.ChallengeParameters) {
+          throw new Error("Missing ChallengeParameters. User might not be set up for WebAuthn.");
+        }
+
+        const options = JSON.parse(startResponse.ChallengeParameters.CREDENTIAL_REQUEST_OPTIONS);
+        console.log("Full Options from Cognito:", options);
+
+        const challenge = options.challenge || startResponse.ChallengeParameters.CHALLENGE;
+        const allowCredentials = options.allowCredentials;
+
+        console.log("Using Challenge:", challenge);
+        console.log("Allow Credentials:", allowCredentials);
+
+        const credential = await navigator.credentials.get({
+          publicKey: {
+            challenge: base64urlToBytes(challenge),
+            rpId: 'localhost', // Or your RP ID
+            allowCredentials: allowCredentials.map(cred => ({
+              id: base64urlToBytes(cred.id),
+              type: cred.type
+            })),
+            userVerification: 'preferred'
+          }
+        });
+
+        const assertion = assertionToObject(credential);
+
+        // This must match what Cognito expects for WEB_AUTHN challenge response
+        const challengeResponses = {
+          'USERNAME': username,
+          'CREDENTIAL': JSON.stringify(assertion)
+        };
+
+        const result = await cognitoLoginFinish(username, challengeResponses, startResponse.Session);
+        setMessage('Cognito Authentication Successful!');
+        setIsAuthenticated(true);
+        const userInfo = { username: username, display_name: username };
+        setUser(userInfo);
+        setActiveTab('dashboard');
+      }
     } catch (error) {
       setMessage(error.message || 'Authentication failed');
     } finally {
@@ -296,9 +426,29 @@ function App() {
     }
   };
 
+  const handleModeSwitch = (mode) => {
+    setAuthMode(mode);
+    setActiveTab('login');
+    setMessage('');
+    setIsAuthenticated(false);
+    setUser(null);
+    setHasPasskey(false);
+    setPasskeys([]);
+    setQrCode(null);
+    setQrStatus('waiting');
+
+    // Clear Cognito state if switching away/to (resetting session)
+    setCognitoToken(null);
+  };
+
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
+    if (authMode === 'local') {
+      localStorage.removeItem('token');
+      setToken(null);
+    } else {
+      setCognitoToken(null);
+    }
+
     setIsAuthenticated(false);
     setUser(null);
     setUsername('');
@@ -319,6 +469,10 @@ function App() {
   };
 
   function base64urlToBytes(base64url) {
+    if (!base64url) {
+      console.error("base64urlToBytes received empty input");
+      return new Uint8Array(0);
+    }
     const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
     const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
     const binaryString = atob(base64);
@@ -341,15 +495,19 @@ function App() {
   }
 
   function credentialToObject(credential) {
-    return {
+    const credentialObj = {
       id: credential.id,
       rawId: bytesToBase64url(new Uint8Array(credential.rawId)),
       type: credential.type,
       response: {
         clientDataJSON: bytesToBase64url(new Uint8Array(credential.response.clientDataJSON)),
         attestationObject: bytesToBase64url(new Uint8Array(credential.response.attestationObject)),
+        transports: credential.response.getTransports ? credential.response.getTransports() || [] : [],
       },
+      clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
     };
+    console.log('Credential Object:', JSON.stringify(credentialObj, null, 2));
+    return credentialObj;
   }
 
   function assertionToObject(assertion) {
@@ -366,6 +524,24 @@ function App() {
           : null,
       },
     };
+  }
+
+  // Simplified Dashboard for Cognito
+  if (isAuthenticated && user && authMode === 'cognito') {
+    return (
+      <div className="App">
+        <div className="container">
+          <header className="header">
+            <h1>Cognito FIDO2 Auth</h1>
+          </header>
+          <div className="card">
+            <h2>Welcome, {user.username}!</h2>
+            <div className="alert alert-success">Authenticated via AWS Cognito</div>
+            <button onClick={handleLogout} className="btn btn-secondary">Logout</button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   if (isAuthenticated && user) {
@@ -517,16 +693,16 @@ function App() {
                           </div>
                           <div className="qr-status">
                             {qrStatus === 'waiting' && (
-                            <p className="hint">⏳ Waiting for passkey registration...</p>
+                              <p className="hint">⏳ Waiting for passkey registration...</p>
                             )}
                             {qrStatus === 'completed' && (
-                            <p className="success">✓ Passkey registered successfully!</p>
+                              <p className="success">✓ Passkey registered successfully!</p>
                             )}
                           </div>
                           <p className="qr-instructions">
-                            1. Open your phone's camera app<br/>
-                            2. Point at the QR code<br/>
-                            3. Tap the link to open registration page<br/>
+                            1. Open your phone's camera app<br />
+                            2. Point at the QR code<br />
+                            3. Tap the link to open registration page<br />
                             4. Follow the prompts to register passkey
                           </p>
                         </div>
@@ -558,6 +734,20 @@ function App() {
         <header className="header">
           <h1>FIDO2 Passkey Authentication</h1>
           <p>Secure passwordless authentication using WebAuthn</p>
+          <div className="mode-switch">
+            <button
+              className={`mode-btn ${authMode === 'local' ? 'active' : ''}`}
+              onClick={() => handleModeSwitch('local')}
+            >
+              Local Auth
+            </button>
+            <button
+              className={`mode-btn ${authMode === 'cognito' ? 'active' : ''}`}
+              onClick={() => handleModeSwitch('cognito')}
+            >
+              Cognito Auth
+            </button>
+          </div>
         </header>
 
         <div className="card">
@@ -566,24 +756,106 @@ function App() {
               className={`tab ${activeTab === 'login' ? 'active' : ''}`}
               onClick={() => setActiveTab('login')}
             >
-              Login
+              Start
             </button>
+            {authMode === 'cognito' && !isAuthenticated && (
+              <button
+                className={`tab ${activeTab === 'signup' ? 'active' : ''}`}
+                onClick={() => setActiveTab('signup')}
+              >
+                Sign Up
+              </button>
+            )}
+            {authMode === 'cognito' && cognitoToken && (
+              <button
+                className={`tab ${activeTab === 'cognito-register' ? 'active' : ''}`}
+                onClick={() => setActiveTab('cognito-register')}
+              >
+                Register Passkey
+              </button>
+            )}
           </div>
+
+          {activeTab === 'signup' && (
+            <div className="tab-content">
+              <h2>Cognito Sign Up</h2>
+              <form onSubmit={handleCognitoSignUp}>
+                <div className="form-group">
+                  <label htmlFor="signup-username">Username (Email)</label>
+                  <input
+                    id="signup-username"
+                    type="email"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    placeholder="Enter your email"
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="signup-password">Password</label>
+                  <input
+                    id="signup-password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    placeholder="Enter a strong password"
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={isLoading}>
+                  {isLoading ? 'Creating Account...' : 'Sign Up'}
+                </button>
+              </form>
+            </div>
+          )}
+
+          {activeTab === 'signup-confirm' && (
+            <div className="tab-content">
+              <h2>Confirm Sign Up</h2>
+              <p>Please enter the verification code sent to {username}</p>
+              <form onSubmit={handleCognitoConfirmSignUp}>
+                <div className="form-group">
+                  <label htmlFor="confirmation-code">Verification Code</label>
+                  <input
+                    id="confirmation-code"
+                    type="text"
+                    value={confirmationCode}
+                    onChange={(e) => setConfirmationCode(e.target.value)}
+                    required
+                    placeholder="Enter code"
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={isLoading}>
+                  {isLoading ? 'Confirming...' : 'Confirm Account'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setActiveTab('signup')}
+                  style={{ marginTop: '10px' }}
+                >
+                  Back to Sign Up
+                </button>
+              </form>
+            </div>
+          )}
 
           {activeTab === 'login' && (
             <div className="tab-content">
-              <h2>Login</h2>
+              <h2>{authMode === 'local' ? 'Local Login' : 'Cognito Login'}</h2>
 
               <div className="login-methods">
-                {/* Usernameless Passkey Login - No username required - RECOMMENDED */}
-                <div className="login-method login-method-recommended">
-                  <div className="recommended-badge">⭐ RECOMMENDED</div>
-                  <h3>🔐 Login with Passkey (No Username)</h3>
-                  <p className="hint">Use your registered passkey to login instantly - no username needed! The fastest and most secure way to login.</p>
-                  <button onClick={handleUsernamelessLogin} className="btn btn-primary" disabled={isLoading}>
-                    {isLoading ? 'Authenticating...' : 'Login with Passkey'}
-                  </button>
-                </div>
+                {/* Usernameless Passkey Login - Only for Local currently */}
+                {authMode === 'local' && (
+                  <div className="login-method login-method-recommended">
+                    <div className="recommended-badge">⭐ RECOMMENDED</div>
+                    <h3>🔐 Login with Passkey (No Username)</h3>
+                    <p className="hint">Use your registered passkey to login instantly - no username needed! The fastest and most secure way to login.</p>
+                    <button onClick={handleUsernamelessLogin} className="btn btn-primary" disabled={isLoading}>
+                      {isLoading ? 'Authenticating...' : 'Login with Passkey'}
+                    </button>
+                  </div>
+                )}
 
                 <div className="divider">OR</div>
 
@@ -612,7 +884,7 @@ function App() {
 
                 <div className="login-method">
                   <h3>Login with Password</h3>
-                  <p className="hint">Use your password if you haven't set up biometric login yet.</p>
+                  <p className="hint">{authMode === 'local' ? "Use your password if you haven't set up biometric login yet." : "Authenticate with Cognito User Pool to register a passkey."}</p>
                   <form onSubmit={handlePasswordLogin}>
                     <div className="form-group">
                       <label htmlFor="password-username">Username</label>
@@ -643,9 +915,21 @@ function App() {
                 </div>
               </div>
 
-              <div className="hint">
-                <p>Default credentials: user / user</p>
-              </div>
+              {authMode === 'local' && (
+                <div className="hint">
+                  <p>Default credentials: user / user</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'cognito-register' && (
+            <div className="tab-content">
+              <h3>Register Cognito Passkey</h3>
+              <p>You have authenticated with password. Now you can register a passkey for passwordless login next time.</p>
+              <button onClick={handleRegisterPasskey} className="btn btn-primary" disabled={isLoading}>
+                {isLoading ? "Registering..." : "Register Passkey on this Device"}
+              </button>
             </div>
           )}
 
@@ -657,7 +941,7 @@ function App() {
         </div>
 
         <footer className="footer">
-          <p>Built with FastAPI, React, and WebAuthn</p>
+          <p>Built with FastAPI, React, and WebAuthn ({authMode} mode)</p>
         </footer>
       </div>
     </div>

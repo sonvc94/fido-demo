@@ -210,6 +210,145 @@ async function loginUsernamelessFinish(assertion, challenge) {
   return response.json();
 }
 
+// Cognito functions
+async function cognitoPasswordLogin(username, password) {
+  const response = await fetch(`${API_BASE}/auth/cognito/login-password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username,
+      password,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito password login failed');
+  }
+
+  return response.json();
+}
+
+async function cognitoRegisterStart(accessToken) {
+  const response = await fetch(`${API_BASE}/auth/cognito/register/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      access_token: accessToken,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito registration start failed');
+  }
+
+  return response.json();
+}
+
+async function cognitoRegisterFinish(accessToken, credential) {
+  const response = await fetch(`${API_BASE}/auth/cognito/register/finish`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      access_token: accessToken,
+      credential,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito registration failed');
+  }
+
+  return response.json();
+}
+
+async function cognitoLoginStart(username) {
+  const response = await fetch(`${API_BASE}/auth/cognito/login/start`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito login start failed');
+  }
+
+  return response.json();
+}
+
+async function cognitoLoginFinish(username, challengeResponses, session) {
+  const response = await fetch(`${API_BASE}/auth/cognito/login/finish`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username,
+      challenge_responses: challengeResponses,
+      session,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito authentication failed');
+  }
+
+  return response.json();
+}
+
+async function cognitoSignUp(username, password) {
+  const response = await fetch(`${API_BASE}/auth/cognito/signup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username,
+      password,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito sign up failed');
+  }
+
+  return response.json();
+}
+async function cognitoConfirmSignUp(username, code) {
+  const response = await fetch(`${API_BASE}/auth/cognito/confirm-signup`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      username,
+      code,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Cognito sign up confirmation failed');
+  }
+
+  return response.json();
+}
+
 export {
   registerStart,
   registerFinish,
@@ -222,4 +361,12 @@ export {
   getQrStatus,
   loginUsernamelessStart,
   loginUsernamelessFinish,
+  // Cognito exports
+  cognitoPasswordLogin,
+  cognitoRegisterStart,
+  cognitoRegisterFinish,
+  cognitoLoginStart,
+  cognitoLoginFinish,
+  cognitoSignUp,
+  cognitoConfirmSignUp,
 };

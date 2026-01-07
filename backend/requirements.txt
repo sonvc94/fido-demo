@@ -9,3 +9,4 @@ pyjwt
 websockets
 qrcode
 pillow
+boto3
